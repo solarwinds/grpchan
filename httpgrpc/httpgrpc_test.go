@@ -10,9 +10,9 @@ import (
 
 	"golang.org/x/net/context"
 
-	"github.com/fullstorydev/grpchan"
-	"github.com/fullstorydev/grpchan/grpchantesting"
-	"github.com/fullstorydev/grpchan/httpgrpc"
+	"github.com/librato/grpchan"
+	"github.com/librato/grpchan/grpchantesting"
+	"github.com/librato/grpchan/httpgrpc"
 )
 
 func TestGrpcOverHttp(t *testing.T) {

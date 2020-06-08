@@ -89,8 +89,8 @@ func (m *TrailerValues) GetValues() []string {
 }
 
 func init() {
-	proto.RegisterType((*HttpTrailer)(nil), "fullstorydev.grpchan.httpgrpc.HttpTrailer")
-	proto.RegisterType((*TrailerValues)(nil), "fullstorydev.grpchan.httpgrpc.TrailerValues")
+	proto.RegisterType((*HttpTrailer)(nil), "librato.grpchan.httpgrpc.HttpTrailer")
+	proto.RegisterType((*TrailerValues)(nil), "librato.grpchan.httpgrpc.TrailerValues")
 }
 
 func init() { proto.RegisterFile("httpgrpc.proto", fileDescriptor0) }

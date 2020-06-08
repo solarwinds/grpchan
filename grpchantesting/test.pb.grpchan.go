@@ -3,7 +3,7 @@
 
 package grpchantesting
 
-import "github.com/fullstorydev/grpchan"
+import "github.com/librato/grpchan"
 import "github.com/golang/protobuf/ptypes/empty"
 import "golang.org/x/net/context"
 import "google.golang.org/grpc"
