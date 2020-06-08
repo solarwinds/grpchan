@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fullstorydev/grpchan/grpchantesting"
-	"github.com/fullstorydev/grpchan/inprocgrpc"
+	"github.com/librato/grpchan/grpchantesting"
+	"github.com/librato/grpchan/inprocgrpc"
 	"github.com/jhump/protoreflect/desc"
 	"github.com/jhump/protoreflect/dynamic"
 	"github.com/jhump/protoreflect/dynamic/grpcdynamic"

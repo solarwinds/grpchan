@@ -16,7 +16,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/fullstorydev/grpchan"
+	"github.com/librato/grpchan"
 )
 
 // RunChannelTestCases runs numerous test cases to exercise the behavior of the

@@ -1,4 +1,4 @@
-module github.com/fullstorydev/grpchan
+module github.com/librato/grpchan
 
 require (
 	github.com/golang/protobuf v1.3.1

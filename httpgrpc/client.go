@@ -28,8 +28,8 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
-	"github.com/fullstorydev/grpchan"
-	"github.com/fullstorydev/grpchan/internal"
+	"github.com/librato/grpchan"
+	"github.com/librato/grpchan/internal"
 )
 
 // Channel is used as a connection for GRPC requests issued over HTTP 1.1. The

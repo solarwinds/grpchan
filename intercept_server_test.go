@@ -13,9 +13,9 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/fullstorydev/grpchan"
-	"github.com/fullstorydev/grpchan/grpchantesting"
-	"github.com/fullstorydev/grpchan/internal"
+	"github.com/librato/grpchan"
+	"github.com/librato/grpchan/grpchantesting"
+	"github.com/librato/grpchan/internal"
 )
 
 func TestInterceptServerUnary(t *testing.T) {

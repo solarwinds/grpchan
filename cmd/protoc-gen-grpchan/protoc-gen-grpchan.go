@@ -1,5 +1,5 @@
 // Command protoc-gen-grpchan is a protoc plugin that generates gRPC client stubs
-// in Go that use github.com/fullstorydev/grpchan.Channel as their transport
+// in Go that use github.com/librato/grpchan.Channel as their transport
 // abstraction, instead of using *grpc.ClientConn. This can be used to carry RPC
 // requests and streams over other transports, such as HTTP 1.1 or in-process.
 package main
@@ -53,8 +53,8 @@ func doCodeGen(req *plugins.CodeGenRequest, resp *plugins.CodeGenResponse) error
 	return nil
 }
 
-var typeOfRegistry = gopoet.NamedType(gopoet.NewSymbol("github.com/fullstorydev/grpchan", "ServiceRegistry"))
-var typeOfChannel = gopoet.NamedType(gopoet.NewSymbol("github.com/fullstorydev/grpchan", "Channel"))
+var typeOfRegistry = gopoet.NamedType(gopoet.NewSymbol("github.com/librato/grpchan", "ServiceRegistry"))
+var typeOfChannel = gopoet.NamedType(gopoet.NewSymbol("github.com/librato/grpchan", "Channel"))
 var typeOfContext = gopoet.NamedType(gopoet.NewSymbol("golang.org/x/net/context", "Context"))
 var typeOfCallOptions = gopoet.SliceType(gopoet.NamedType(gopoet.NewSymbol("google.golang.org/grpc", "CallOption")))
 
