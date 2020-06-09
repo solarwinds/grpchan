@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/librato/grpchan/grpchantesting"
-	"github.com/librato/grpchan/inprocgrpc"
 	"github.com/jhump/protoreflect/desc"
 	"github.com/jhump/protoreflect/dynamic"
 	"github.com/jhump/protoreflect/dynamic/grpcdynamic"
+	"github.com/librato/grpchan/grpchantesting"
+	"github.com/librato/grpchan/inprocgrpc"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
