@@ -1,5 +1,7 @@
 module github.com/librato/grpchan
 
+go 1.14
+
 require (
 	github.com/golang/protobuf v1.3.1
 	github.com/gordonklaus/ineffassign v0.0.0-20200309095847-7953dde2c7bf // indirect
