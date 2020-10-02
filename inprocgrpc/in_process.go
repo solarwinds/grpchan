@@ -135,8 +135,8 @@ var _ grpchan.ServiceRegistry = (*Channel)(nil)
 // particular service. Services are identified by their fully-qualified name
 // (e.g. "<package>.<service>").
 func (c *Channel) RegisterService(desc *grpc.ServiceDesc, svr interface{}) {
-	if c.handlers == nil {
-		c.handlers = grpchan.HandlerMap{}
+	if c.handlers.Empty() {
+		c.handlers = grpchan.NewHandlerMap()
 	}
 	c.handlers.RegisterService(desc, svr)
 }

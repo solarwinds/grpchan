@@ -3,6 +3,7 @@ package grpchan
 import (
 	"fmt"
 	"reflect"
+	"sync"
 
 	"google.golang.org/grpc"
 )
@@ -24,7 +25,19 @@ var _ ServiceRegistry = (*grpc.Server)(nil)
 // can be registered once in the map, and then re-used to configure multiple
 // servers that should expose the same handlers. HandlerMap can also be used
 // as the internal store of registered handlers for a server implementation.
-type HandlerMap map[string]service
+type handlerMap map[string]service
+
+type HandlerMap struct {
+	hm   handlerMap
+	hmMu *sync.RWMutex
+}
+
+func NewHandlerMap() HandlerMap {
+	return HandlerMap{
+		hm:   map[string]service{},
+		hmMu: &sync.RWMutex{},
+	}
+}
 
 var _ ServiceRegistry = HandlerMap(nil)
 
@@ -37,22 +50,28 @@ type service struct {
 // Only a single handler can be registered for a given service. And services are
 // identified by their fully-qualified name (e.g. "package.name.Service").
 func (r HandlerMap) RegisterService(desc *grpc.ServiceDesc, h interface{}) {
+	r.hmMu.Lock()
+	defer r.hmMu.Unlock()
+
 	ht := reflect.TypeOf(desc.HandlerType).Elem()
 	st := reflect.TypeOf(h)
 	if !st.Implements(ht) {
 		panic(fmt.Sprintf("service %s: handler of type %v does not satisfy %v", desc.ServiceName, st, ht))
 	}
-	if _, ok := r[desc.ServiceName]; ok {
+	if _, ok := r.hm[desc.ServiceName]; ok {
 		panic(fmt.Sprintf("service %s: handler already registered", desc.ServiceName))
 	}
-	r[desc.ServiceName] = service{desc: desc, handler: h}
+	r.hm[desc.ServiceName] = service{desc: desc, handler: h}
 }
 
 // QueryService returns the service descriptor and handler for the named
 // service. If no handler has been registered for the named service, then
 // nil, nil is returned.
 func (r HandlerMap) QueryService(name string) (*grpc.ServiceDesc, interface{}) {
-	svc := r[name]
+	r.hmMu.RLock()
+	defer r.hmMu.RUnlock()
+
+	svc := r.hm[name]
 	return svc.desc, svc.handler
 }
 
@@ -63,7 +82,7 @@ func (r HandlerMap) QueryService(name string) (*grpc.ServiceDesc, interface{}) {
 // registering the handlers once, with the map:
 //
 //    // Register all handlers once with the map:
-//    reg := channel.HandlerMap{}
+//    reg := channel.NewHandlerMap()
 //    // (these registration functions are generated)
 //    foo.RegisterHandlerFooBar(newFooBarImpl())
 //    fu.RegisterHandlerFuBaz(newFuBazImpl())
@@ -79,7 +98,17 @@ func (r HandlerMap) QueryService(name string) (*grpc.ServiceDesc, interface{}) {
 //    httpgrpc.HandleServices(http.HandleFunc, "/rpc/", reg, nil, nil)
 //
 func (r HandlerMap) ForEach(fn func(desc *grpc.ServiceDesc, svr interface{})) {
-	for _, svc := range r {
+	r.hmMu.RLock()
+	defer r.hmMu.RUnlock()
+
+	for _, svc := range r.hm {
 		fn(svc.desc, svc.handler)
 	}
+}
+
+func (r HandlerMap) Empty() bool {
+	r.hmMu.RLock()
+	defer r.hmMu.RUnlock()
+
+	return r.hm == nil
 }
