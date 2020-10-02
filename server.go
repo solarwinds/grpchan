@@ -39,7 +39,7 @@ func NewHandlerMap() HandlerMap {
 	}
 }
 
-var _ ServiceRegistry = HandlerMap(nil)
+var _ ServiceRegistry = NewHandlerMap()
 
 type service struct {
 	desc    *grpc.ServiceDesc
