@@ -107,6 +107,10 @@ func (r HandlerMap) ForEach(fn func(desc *grpc.ServiceDesc, svr interface{})) {
 }
 
 func (r HandlerMap) Empty() bool {
+	if r.hmMu == nil {
+		return true
+	}
+
 	r.hmMu.RLock()
 	defer r.hmMu.RUnlock()
 
