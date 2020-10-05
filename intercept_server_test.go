@@ -20,7 +20,7 @@ import (
 
 func TestInterceptServerUnary(t *testing.T) {
 	svr := &testServer{}
-	handlers := grpchan.NewHandlerMap()
+	handlers := grpchan.HandlerMap{}
 
 	// this will make sure unary interceptors are composed correctly
 	var lastSeen string
@@ -126,7 +126,7 @@ func TestInterceptServerUnary(t *testing.T) {
 
 func TestInterceptServerStream(t *testing.T) {
 	svr := &testServer{}
-	handlers := grpchan.NewHandlerMap()
+	handlers := grpchan.HandlerMap{}
 
 	var messageCount, successCount, failCount int
 	grpchantesting.RegisterHandlerTestService(grpchan.WithInterceptor(handlers, nil,

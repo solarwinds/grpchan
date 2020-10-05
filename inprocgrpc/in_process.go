@@ -121,7 +121,9 @@ func (m frame) String() string {
 // The server-side of an RPC is executed in a separate goroutine, so things like
 // deadlines and context cancellation work, even for unary RPCs.
 type Channel struct {
-	handlers          grpchan.HandlerMap
+	handlers   grpchan.HandlerMap
+	handlersMu sync.RWMutex
+
 	unaryInterceptor  grpc.UnaryServerInterceptor
 	streamInterceptor grpc.StreamServerInterceptor
 	cloner            Cloner
@@ -135,9 +137,13 @@ var _ grpchan.ServiceRegistry = (*Channel)(nil)
 // particular service. Services are identified by their fully-qualified name
 // (e.g. "<package>.<service>").
 func (c *Channel) RegisterService(desc *grpc.ServiceDesc, svr interface{}) {
-	if c.handlers.Empty() {
-		c.handlers = grpchan.NewHandlerMap()
+	c.handlersMu.Lock()
+	defer c.handlersMu.Unlock()
+
+	if c.handlers == nil {
+		c.handlers = grpchan.HandlerMap{}
 	}
+
 	c.handlers.RegisterService(desc, svr)
 }
 
@@ -208,6 +214,10 @@ func (c *Channel) Invoke(ctx context.Context, method string, req, resp interface
 	strs := strings.SplitN(method[1:], "/", 2)
 	serviceName := strs[0]
 	methodName := strs[1]
+
+	c.handlersMu.RLock()
+	defer c.handlersMu.RUnlock()
+
 	sd, handler := c.handlers.QueryService(serviceName)
 	if sd == nil {
 		// service name not found
@@ -313,6 +323,10 @@ func (c *Channel) NewStream(ctx context.Context, desc *grpc.StreamDesc, method s
 	// corresponding StreamDesc that includes a handler.
 	serviceName := strs[0]
 	methodName := strs[1]
+
+	c.handlersMu.RLock()
+	defer c.handlersMu.RUnlock()
+
 	sd, handler := c.handlers.QueryService(serviceName)
 	if sd == nil {
 		// service name not found
