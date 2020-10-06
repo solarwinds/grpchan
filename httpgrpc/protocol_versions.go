@@ -11,7 +11,7 @@ package httpgrpc
 //    and Version-Next. Version-Next should be fully deployed (in all clients and servers)
 //    before any third version is conceived. That way, Version-Now support can be removed.
 //    The code will be simpler if we only support to 2 versions, instead of up to N.
-// 3. Create a new implementation of github.com/librato/grpchan.Channel named channelNext
+// 3. Create a new implementation of github.com/solarwinds/grpchan.Channel named channelNext
 //    that implements Version-Next for clients. IMPORTANT: note that the recommended name
 //    is NOT exported. It should not yet be usable and should only be used for tests inside
 //    this package.

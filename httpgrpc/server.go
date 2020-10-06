@@ -21,8 +21,8 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
-	"github.com/librato/grpchan"
-	"github.com/librato/grpchan/internal"
+	"github.com/solarwinds/grpchan"
+	"github.com/solarwinds/grpchan/internal"
 )
 
 // Mux is a function that can register a gRPC-over-HTTP handler. This is used to

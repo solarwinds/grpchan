@@ -8,7 +8,7 @@ import (
 	"github.com/golang/protobuf/jsonpb"
 	"github.com/golang/protobuf/proto"
 
-	"github.com/librato/grpchan/httpgrpc"
+	"github.com/solarwinds/grpchan/httpgrpc"
 )
 
 var (
