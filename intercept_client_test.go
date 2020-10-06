@@ -13,9 +13,9 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/librato/grpchan"
-	"github.com/librato/grpchan/grpchantesting"
-	"github.com/librato/grpchan/internal"
+	"github.com/solarwinds/grpchan"
+	"github.com/solarwinds/grpchan/grpchantesting"
+	"github.com/solarwinds/grpchan/internal"
 )
 
 func TestInterceptChannelUnary(t *testing.T) {

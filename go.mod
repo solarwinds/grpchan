@@ -1,4 +1,4 @@
-module github.com/librato/grpchan
+module github.com/solarwinds/grpchan
 
 go 1.14
 

@@ -6,7 +6,7 @@ import (
 
 	"google.golang.org/grpc/encoding"
 
-	"github.com/librato/grpchan/internal"
+	"github.com/solarwinds/grpchan/internal"
 )
 
 // Cloner knows how to make copies of messages. It can be asked to copy one
