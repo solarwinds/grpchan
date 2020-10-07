@@ -2,6 +2,7 @@ package grpchan
 
 import (
 	"fmt"
+	"log"
 	"reflect"
 
 	"google.golang.org/grpc"
@@ -37,6 +38,8 @@ type service struct {
 // Only a single handler can be registered for a given service. And services are
 // identified by their fully-qualified name (e.g. "package.name.Service").
 func (r HandlerMap) RegisterService(desc *grpc.ServiceDesc, h interface{}) {
+	log.Printf("HandlerMap.RegisterService() %+v %+v", *desc, h)
+
 	ht := reflect.TypeOf(desc.HandlerType).Elem()
 	st := reflect.TypeOf(h)
 	if !st.Implements(ht) {
@@ -52,6 +55,8 @@ func (r HandlerMap) RegisterService(desc *grpc.ServiceDesc, h interface{}) {
 // service. If no handler has been registered for the named service, then
 // nil, nil is returned.
 func (r HandlerMap) QueryService(name string) (*grpc.ServiceDesc, interface{}) {
+	log.Printf("HandlerMap.QueryService() %+v", name)
+
 	svc := r[name]
 	return svc.desc, svc.handler
 }
