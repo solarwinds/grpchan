@@ -22,8 +22,8 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
-	"github.com/librato/grpchan"
-	"github.com/librato/grpchan/internal"
+	"github.com/solarwinds/grpchan"
+	"github.com/solarwinds/grpchan/internal"
 )
 
 // frame is the unit of communication with gRPC streams. Frames are used to send

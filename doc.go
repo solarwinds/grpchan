@@ -19,7 +19,7 @@
 // To use the protoc plugin, you need to first build it and make sure its
 // location is in your PATH.
 //
-//   go install github.com/librato/grpchan/cmd/protoc-gen-grpchan
+//   go install github.com/solarwinds/grpchan/cmd/protoc-gen-grpchan
 //   # If necessary, make sure its location is on your path like so:
 //   #   export PATH=$PATH:$GOPATH/bin
 //
