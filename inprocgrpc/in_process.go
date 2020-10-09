@@ -136,9 +136,6 @@ var _ grpchan.ServiceRegistry = (*Channel)(nil)
 // SetHandlersExpectations updates the expected service handlers
 // so that QueryService can later wait for them giving a chance to be registered beforehand
 func (c *Channel) SetHandlersExpectations(servicesNum int) {
-	c.handlersMu.Lock()
-	defer c.handlersMu.Unlock()
-
 	c.handlersExpectations.Add(servicesNum)
 }
 
@@ -147,6 +144,8 @@ func (c *Channel) SetHandlersExpectations(servicesNum int) {
 // particular service. Services are identified by their fully-qualified name
 // (e.g. "<package>.<service>").
 func (c *Channel) RegisterService(desc *grpc.ServiceDesc, svr interface{}) {
+	defer c.handlersExpectations.Done()
+
 	c.handlersMu.Lock()
 	defer c.handlersMu.Unlock()
 
@@ -154,17 +153,15 @@ func (c *Channel) RegisterService(desc *grpc.ServiceDesc, svr interface{}) {
 		c.handlers = grpchan.HandlerMap{}
 	}
 
-	c.handlersExpectations.Done()
-
 	c.handlers.RegisterService(desc, svr)
 }
 
 // QueryService forwards querying for the registered service handlers but in the thread-safe way
 func (c *Channel) QueryService(name string) (*grpc.ServiceDesc, interface{}) {
+	c.handlersExpectations.Wait()
+
 	c.handlersMu.RLock()
 	defer c.handlersMu.RUnlock()
-
-	c.handlersExpectations.Wait()
 
 	return c.handlers.QueryService(name)
 }
