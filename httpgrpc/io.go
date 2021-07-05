@@ -29,7 +29,7 @@ func writeSizePreface(w io.Writer, sz int32) error {
 // is the last message in the stream. (The last message should be an instance
 // of HttpTrailer.)
 func writeProtoMessage(w io.Writer, m proto.Message, end bool) error {
-	b, err := proto.Marshal(m.(proto.Message))
+	b, err := proto.Marshal(m)
 	if err != nil {
 		return err
 	}
