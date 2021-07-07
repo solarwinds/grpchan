@@ -1,6 +1,3 @@
-# File managed by pluginsync
-
-#
 # Copyright 2015 Intel Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,7 +13,7 @@
 # limitations under the License.
 #
 #
-# Copyright (c) 2020 SolarWinds Worldwide, LLC
+# Copyright (c) 2021 SolarWinds Worldwide, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
