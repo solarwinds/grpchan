@@ -31,7 +31,7 @@
 # limitations under the License.
 #
 
-# Support travis.ci environment matrix:
+# Support CI environment matrix:
 TEST_TYPE="${TEST_TYPE:-$1}"
 UNIT_TEST="${UNIT_TEST:-"gofmt goimports go_vet go_test go_cover"}"
 TEST_K8S="${TEST_K8S:-0}"
