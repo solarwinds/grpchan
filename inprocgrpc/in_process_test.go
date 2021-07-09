@@ -18,6 +18,9 @@ import (
 )
 
 func TestInProcessChannel(t *testing.T) {
+	// TODO: https://swicloud.atlassian.net/browse/AO-20152
+	t.Skip()
+
 	svr := &grpchantesting.TestServer{}
 
 	var cc inprocgrpc.Channel
@@ -42,6 +45,9 @@ func TestInProcessChannel(t *testing.T) {
 }
 
 func TestUseDynamicMessage(t *testing.T) {
+	// TODO: https://swicloud.atlassian.net/browse/AO-20152
+	t.Skip()
+
 	// This uses dynamic messages for request and response and
 	// ensures the in-process channel works correctly that way.
 

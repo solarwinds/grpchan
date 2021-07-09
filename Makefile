@@ -1,61 +1,50 @@
-# TODO: run golint and errcheck, but only to catch *new* violations and
-# decide whether to change code or not (e.g. we need to be able to whitelist
-# violations already in the code). They can be useful to catch errors, but
-# they are just too noisy to be a requirement for a CI -- we don't even *want*
-# to fix some of the things they consider to be violations.
-.PHONY: ci
-ci: deps checkgofmt vet staticcheck ineffassign predeclared test
+# Copyright 2015 Intel Corporation
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+#
+# Copyright (c) 2021 SolarWinds Worldwide, LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
 
-.PHONY: deps
+default:
+	$(MAKE) deps
 deps:
-	go get -d -v -t ./...
-
-.PHONY: updatedeps
-updatedeps:
-	go get -d -v -t -u -f ./...
-
-.PHONY: install
-install:
-	go install ./...
-
-.PHONY: checkgofmt
-checkgofmt:
-	gofmt -s -l .
-	@if [ -n "$$(gofmt -s -l .)" ]; then \
-		exit 1; \
-	fi
-
-.PHONY: vet
-vet:
-	go vet ./...
-
-.PHONY: staticcheck
-staticcheck:
-	@go get honnef.co/go/tools/cmd/staticcheck
-	staticcheck ./...
-
-.PHONY: ineffassign
-ineffassign:
-	@go get github.com/gordonklaus/ineffassign
-	ineffassign .
-
-.PHONY: predeclared
-predeclared:
-	@go get github.com/nishanths/predeclared
-	predeclared .
-
-# Intentionally omitted from CI, but target here for ad-hoc reports.
-.PHONY: golint
-golint:
-	@go get golang.org/x/lint/golint
-	golint -min_confidence 0.9 -set_exit_status ./...
-
-# Intentionally omitted from CI, but target here for ad-hoc reports.
-.PHONY: errcheck
-errcheck:
-	@go get github.com/kisielk/errcheck
-	errcheck ./...
-
-.PHONY: test
+	bash -c "./scripts/deps.sh"
 test:
-	go test -race ./...
+	bash -c "./scripts/test.sh $(TEST_TYPE)"
+test-small:
+	bash -c "./scripts/test.sh small"
+test-medium:
+	bash -c "./scripts/test.sh medium"
+test-all:
+	$(MAKE) test-small
+	$(MAKE) test-medium
+check:
+	$(MAKE) test
+
+build:
+	$(MAKE) deps
+	bash -c "./scripts/build.sh"
+

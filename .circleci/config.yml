@@ -1,0 +1,49 @@
+version: 2.1
+
+jobs:
+  "test":
+    parameters:
+      version:
+        type: string
+        default: "latest"
+      golint:
+        type: boolean
+        default: true
+      modules:
+        type: boolean
+        default: true
+      goproxy:
+        type: string
+        default: ""
+    docker:
+      - image: "circleci/golang:<< parameters.version >>"
+    working_directory: /go/src/github.com/solarwinds/grpchan
+    environment:
+      GOPROXY: "<< parameters.goproxy >>"
+    steps:
+      - checkout
+      - run:
+          name: "Print the Go version"
+          command: >
+            go version
+      # Only run gofmt, vet & lint against the latest Go version 
+      - run:
+          name: "Run lint"
+          command: >
+            TEST_TYPE="lint" make check 2>&1
+      - run:
+          name: "Staticcheck"
+          command: >
+            go install honnef.co/go/tools/cmd/staticcheck && staticcheck ./...
+      - run:
+          name: "Run small test"
+          command: >
+            TEST_TYPE="small" make check 2>&1
+
+workflows:
+  tests:
+    jobs:
+      - test:
+          matrix:
+            parameters:
+              version: ["latest", "1.16", "1.15", "1.14", "1.13"] 
