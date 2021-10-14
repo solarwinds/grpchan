@@ -1,28 +1,28 @@
 package grpchan_test
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"reflect"
 	"testing"
 
-	"github.com/golang/protobuf/proto"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/solarwinds/grpchan"
 	"github.com/solarwinds/grpchan/grpchantesting"
 	"github.com/solarwinds/grpchan/internal"
 )
 
-func TestInterceptChannelUnary(t *testing.T) {
-	tc := testChannel{}
+func TestInterceptClientConnUnary(t *testing.T) {
+	tc := testConn{}
 
 	var successCount, failCount int
-	intercepted := grpchan.InterceptChannel(&tc,
+	intercepted := grpchan.InterceptClientConn(&tc,
 		func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 			if err := invoker(ctx, method, req, reply, cc, opts...); err != nil {
 				failCount++
@@ -32,7 +32,7 @@ func TestInterceptChannelUnary(t *testing.T) {
 			return nil
 		}, nil)
 
-	cli := grpchantesting.NewTestServiceChannelClient(intercepted)
+	cli := grpchantesting.NewTestServiceClient(intercepted)
 
 	// success
 	tc.resp = &grpchantesting.Message{Count: 123}
@@ -68,14 +68,14 @@ func TestInterceptChannelUnary(t *testing.T) {
 	}
 
 	expected := []interface{}{
-		&unaryCall{
+		&call{
 			methodName: "/grpchantesting.TestService/Unary",
-			req:        &grpchantesting.Message{},
+			reqs:       []interface{}{&grpchantesting.Message{}},
 			headers:    nil,
 		},
-		&unaryCall{
+		&call{
 			methodName: "/grpchantesting.TestService/Unary",
-			req:        &grpchantesting.Message{Count: 456},
+			reqs:       []interface{}{&grpchantesting.Message{Count: 456}},
 			headers:    metadata.Pairs("foo", "bar"),
 		},
 	}
@@ -85,11 +85,11 @@ func TestInterceptChannelUnary(t *testing.T) {
 	}
 }
 
-func TestInterceptChannelStream(t *testing.T) {
-	tc := testChannel{}
+func TestInterceptClientConnStream(t *testing.T) {
+	tc := testConn{}
 
 	var messageCount, successCount, failCount int
-	intercepted := grpchan.InterceptChannel(&tc, nil,
+	intercepted := grpchan.InterceptClientConn(&tc, nil,
 		func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
 			cs, err := streamer(ctx, desc, cc, method, opts...)
 			if err != nil {
@@ -104,7 +104,7 @@ func TestInterceptChannelStream(t *testing.T) {
 			}, nil
 		})
 
-	cli := grpchantesting.NewTestServiceChannelClient(intercepted)
+	cli := grpchantesting.NewTestServiceClient(intercepted)
 
 	// client stream, success
 	tc.resp = &grpchantesting.Message{Count: 123}
@@ -212,7 +212,7 @@ func TestInterceptChannelStream(t *testing.T) {
 	}
 
 	expected := []interface{}{
-		&streamCall{
+		&call{
 			methodName: "/grpchantesting.TestService/ClientStream",
 			reqs: []interface{}{
 				&grpchantesting.Message{},
@@ -221,12 +221,12 @@ func TestInterceptChannelStream(t *testing.T) {
 			},
 			headers: nil,
 		},
-		&streamCall{
+		&call{
 			methodName: "/grpchantesting.TestService/ServerStream",
 			reqs:       []interface{}{&grpchantesting.Message{Count: 456}},
 			headers:    metadata.Pairs("foo", "bar"),
 		},
-		&streamCall{
+		&call{
 			methodName: "/grpchantesting.TestService/BidiStream",
 			reqs: []interface{}{
 				&grpchantesting.Message{Count: 333},
@@ -267,7 +267,7 @@ func (s *testInterceptClientStream) RecvMsg(m interface{}) error {
 	return err
 }
 
-// testChannel is a dummy channel that just records all incoming activity.
+// testConn is a dummy channel that just records all incoming activity.
 //
 // If code is set and not codes.OK, RPCs will fail with that code.
 //
@@ -281,8 +281,8 @@ func (s *testInterceptClientStream) RecvMsg(m interface{}) error {
 // Streaming RPCs will receive the specified headers and trailers as response
 // metadata, if those fields are set.
 //
-// testChannel is not thread-safe, and neither are any returned streams.
-type testChannel struct {
+// testConn is not thread-safe, and neither are any returned streams.
+type testConn struct {
 	code      codes.Code
 	resp      interface{}
 	respCount int
@@ -291,25 +291,19 @@ type testChannel struct {
 	calls     []interface{} // elements are either *unaryCall or *streamCall
 }
 
-type unaryCall struct {
-	methodName string
-	headers    metadata.MD
-	req        interface{}
-}
-
-type streamCall struct {
+type call struct {
 	methodName string
 	headers    metadata.MD
 	reqs       []interface{}
 }
 
-func (ch *testChannel) Invoke(ctx context.Context, methodName string, req, resp interface{}, opts ...grpc.CallOption) error {
+func (ch *testConn) Invoke(ctx context.Context, methodName string, req, resp interface{}, opts ...grpc.CallOption) error {
 	headers, _ := metadata.FromOutgoingContext(ctx)
 	reqClone, err := internal.CloneMessage(req)
 	if err != nil {
 		return err
 	}
-	ch.calls = append(ch.calls, &unaryCall{methodName: methodName, headers: headers, req: reqClone})
+	ch.calls = append(ch.calls, &call{methodName: methodName, headers: headers, reqs: []interface{}{reqClone}})
 	if ch.code != codes.OK {
 		return status.Error(ch.code, ch.code.String())
 	}
@@ -319,9 +313,9 @@ func (ch *testChannel) Invoke(ctx context.Context, methodName string, req, resp 
 	return internal.ClearMessage(resp)
 }
 
-func (ch *testChannel) NewStream(ctx context.Context, desc *grpc.StreamDesc, methodName string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+func (ch *testConn) NewStream(ctx context.Context, desc *grpc.StreamDesc, methodName string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
 	headers, _ := metadata.FromOutgoingContext(ctx)
-	call := &streamCall{methodName: methodName, headers: headers}
+	call := &call{methodName: methodName, headers: headers}
 	ch.calls = append(ch.calls, call)
 	count := ch.respCount
 	if !desc.ServerStreams {
@@ -349,7 +343,7 @@ type testClientStream struct {
 	respCount  int
 	headers    metadata.MD
 	trailers   metadata.MD
-	call       *streamCall
+	call       *call
 	halfClosed bool
 	closed     bool
 }

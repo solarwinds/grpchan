@@ -1,6 +1,7 @@
 package httpgrpc
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -12,11 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/golang/protobuf/proto"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/encoding"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
@@ -34,21 +34,95 @@ import (
 // (for example, adding authentication checks, logging, error handling, etc).
 type Mux func(pattern string, handler func(http.ResponseWriter, *http.Request))
 
+// HandlerOption is an option to customize some aspect of the HTTP handler
+// behavior, such as rendering gRPC errors to HTTP responses.
+type HandlerOption func(*handlerOpts)
+
+type handlerOpts struct {
+	errFunc func(context.Context, *status.Status, http.ResponseWriter)
+}
+
+// ErrorRenderer returns a HandlerOption that will cause the handler to use the
+// given function to render an error.  It is only used for unary RPCs since
+// streaming RPCs serialize a status message to the response trailer (in the
+// HTTP body) instead.
+//
+// The function should call methods on response in order to write an error
+// response, including any response headers, the HTTP status code, and any
+// response body.
+//
+// If no such option is used, the handler will use DefaultErrorRenderer.
+func ErrorRenderer(errFunc func(reqCtx context.Context, st *status.Status, response http.ResponseWriter)) HandlerOption {
+	return func(h *handlerOpts) {
+		h.errFunc = errFunc
+	}
+}
+
+// DefaultErrorRenderer translates the gRPC code in the given status to an HTTP
+// error response. The following table shows how status codes are translated:
+//   Canceled:         * 502 Bad Gateway
+//   Unknown:            500 Internal Server Error
+//   InvalidArgument:    400 Bad Request
+//   DeadlineExceeded: * 504 Gateway Timeout
+//   NotFound:           404 Not Found
+//   AlreadyExists:      409 Conflict
+//   PermissionDenied:   403 Forbidden
+//   Unauthenticated:    401 Unauthorized
+//   ResourceExhausted:  429 Too Many Requests
+//   FailedPrecondition: 412 Precondition Failed
+//   Aborted:            409 Conflict
+//   OutOfRange:         422 Unprocessable Entity
+//   Unimplemented:      501 Not Implemented
+//   Internal:           500 Internal Server Error
+//   Unavailable:        503 Service Unavailable
+//   DataLoss:           500 Internal Server Error
+//
+//   * If the gRPC status indicates Canceled or DeadlineExceeded
+//     and the given request context ALSO indicates a context error
+//     (meaning that the request was cancelled by the client), then
+//     a 499 Client Closed Request code is used instead.
+//
+// If any other gRPC status code is observed, it would get translated into a
+// 500 Internal Server Error.
+//
+// Note that OK is absent from the mapping because the error renderer will never
+// be called for a non-error status.
+//
+// This function uses http.Error to render the computed code (and corresponding
+// status text) to the given ResponseWriter.
+func DefaultErrorRenderer(ctx context.Context, st *status.Status, w http.ResponseWriter) {
+	if (st.Code() == codes.Canceled || st.Code() == codes.DeadlineExceeded) && ctx.Err() != nil {
+		http.Error(w, "Client Closed Request", 499)
+		return
+	}
+	code := httpStatusFromCode(st.Code())
+	msg := http.StatusText(code)
+	if msg == "" {
+		msg = st.Code().String()
+	}
+	http.Error(w, msg, code)
+}
+
 // HandleServices uses the given mux to register handlers for all methods
 // exposed by handlers registered in reg. They are registered using a path of
 // "basePath/name.of.Service/Method". If non-nil interceptor(s) are provided
 // then they will be used to intercept applicable RPCs before dispatch to the
 // registered handler.
-func HandleServices(mux Mux, basePath string, reg grpchan.HandlerMap, unaryInt grpc.UnaryServerInterceptor, streamInt grpc.StreamServerInterceptor) {
+func HandleServices(mux Mux, basePath string, reg grpchan.HandlerMap, unaryInt grpc.UnaryServerInterceptor, streamInt grpc.StreamServerInterceptor, opts ...HandlerOption) {
+	var hOpts handlerOpts
+	for _, opt := range opts {
+		opt(&hOpts)
+	}
+
 	reg.ForEach(func(desc *grpc.ServiceDesc, svr interface{}) {
 		for i := range desc.Methods {
 			md := desc.Methods[i]
-			h := HandleMethod(svr, desc.ServiceName, &md, unaryInt)
+			h := handleMethod(svr, desc.ServiceName, &md, unaryInt, &hOpts)
 			mux(path.Join(basePath, fmt.Sprintf("%s/%s", desc.ServiceName, md.MethodName)), h)
 		}
 		for i := range desc.Streams {
 			sd := desc.Streams[i]
-			h := HandleStream(svr, desc.ServiceName, &sd, streamInt)
+			h := handleStream(svr, desc.ServiceName, &sd, streamInt, &hOpts)
 			mux(path.Join(basePath, fmt.Sprintf("%s/%s", desc.ServiceName, sd.StreamName)), h)
 		}
 	})
@@ -56,7 +130,19 @@ func HandleServices(mux Mux, basePath string, reg grpchan.HandlerMap, unaryInt g
 
 // HandleMethod returns an HTTP handler that will handle a unary RPC method
 // by dispatching the given method on the given server.
-func HandleMethod(svr interface{}, serviceName string, desc *grpc.MethodDesc, unaryInt grpc.UnaryServerInterceptor) http.HandlerFunc {
+func HandleMethod(svr interface{}, serviceName string, desc *grpc.MethodDesc, unaryInt grpc.UnaryServerInterceptor, opts ...HandlerOption) http.HandlerFunc {
+	var hOpts handlerOpts
+	for _, opt := range opts {
+		opt(&hOpts)
+	}
+	return handleMethod(svr, serviceName, desc, unaryInt, &hOpts)
+}
+
+func handleMethod(svr interface{}, serviceName string, desc *grpc.MethodDesc, unaryInt grpc.UnaryServerInterceptor, opts *handlerOpts) http.HandlerFunc {
+	errHandler := opts.errFunc
+	if errHandler == nil {
+		errHandler = DefaultErrorRenderer
+	}
 	fullMethod := fmt.Sprintf("/%s/%s", serviceName, desc.MethodName)
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
@@ -70,20 +156,19 @@ func HandleMethod(svr interface{}, serviceName string, desc *grpc.MethodDesc, un
 			return
 		}
 
-		// NB: This is where support for a second of the protocol would be implemented. This
-		// check would instead need to also accept a second content-type and the logic below
-		// for consuming the request and sending the response would need to switch based on
-		// the actual version in use.
-		if r.Header.Get("Content-Type") != UnaryRpcContentType_V1 {
+		contentType := r.Header.Get("Content-Type")
+		codec := getUnaryCodec(contentType)
+		if codec == nil {
 			writeError(w, http.StatusUnsupportedMediaType)
 			return
 		}
 
-		ctx, err := contextFromHeaders(ctx, r.Header)
+		ctx, cancel, err := contextFromHeaders(ctx, r.Header)
 		if err != nil {
 			writeError(w, http.StatusBadRequest)
 			return
 		}
+		defer cancel()
 
 		req, err := ioutil.ReadAll(r.Body)
 		if err != nil {
@@ -92,7 +177,10 @@ func HandleMethod(svr interface{}, serviceName string, desc *grpc.MethodDesc, un
 		}
 
 		dec := func(msg interface{}) error {
-			return proto.Unmarshal(req, msg.(proto.Message))
+			if err := codec.Unmarshal(req, msg); err != nil {
+				return status.Error(codes.InvalidArgument, err.Error())
+			}
+			return nil
 		}
 		sts := internal.UnaryServerTransportStream{Name: fullMethod}
 		resp, err := desc.Handler(svr, grpc.NewContextWithServerTransportStream(ctx, &sts), dec, unaryInt)
@@ -101,30 +189,33 @@ func HandleMethod(svr interface{}, serviceName string, desc *grpc.MethodDesc, un
 		if err != nil {
 			st, _ := status.FromError(err)
 			if st.Code() == codes.OK {
-				st = status.New(codes.Internal, err.Error())
+				// preserve all error details, but rewrite the code since we don't want
+				// to send back a non-error status when we know an error occured
+				stpb := st.Proto()
+				stpb.Code = int32(codes.Internal)
+				st = status.FromProto(stpb)
 			}
 			statProto := st.Proto()
 			w.Header().Set("X-GRPC-Status", fmt.Sprintf("%d:%s", statProto.Code, statProto.Message))
 			for _, d := range statProto.Details {
-				b, err := proto.Marshal(d)
+				b, err := codec.Marshal(d)
 				if err != nil {
 					continue
 				}
 				str := base64.RawURLEncoding.EncodeToString(b)
 				w.Header().Add(grpcDetailsHeader, str)
 			}
-			httpStatus := httpStatusFromCode(st.Code())
-			writeError(w, httpStatus)
+			errHandler(r.Context(), st, w)
 			return
 		}
 
-		b, err := proto.Marshal(resp.(proto.Message))
+		b, err := codec.Marshal(resp)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError)
 			return
 		}
 
-		w.Header().Set("Content-Type", UnaryRpcContentType_V1)
+		w.Header().Set("Content-Type", contentType)
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(b)))
 		w.Write(b)
 	}
@@ -132,7 +223,15 @@ func HandleMethod(svr interface{}, serviceName string, desc *grpc.MethodDesc, un
 
 // HandleStream returns an HTTP handler that will handle a streaming RPC method
 // by dispatching the given method on the given server.
-func HandleStream(svr interface{}, serviceName string, desc *grpc.StreamDesc, streamInt grpc.StreamServerInterceptor) http.HandlerFunc {
+func HandleStream(svr interface{}, serviceName string, desc *grpc.StreamDesc, streamInt grpc.StreamServerInterceptor, opts ...HandlerOption) http.HandlerFunc {
+	var hOpts handlerOpts
+	for _, opt := range opts {
+		opt(&hOpts)
+	}
+	return handleStream(svr, serviceName, desc, streamInt, &hOpts)
+}
+
+func handleStream(svr interface{}, serviceName string, desc *grpc.StreamDesc, streamInt grpc.StreamServerInterceptor, opts *handlerOpts) http.HandlerFunc {
 	info := &grpc.StreamServerInfo{
 		FullMethod:     fmt.Sprintf("/%s/%s", serviceName, desc.StreamName),
 		IsClientStream: desc.ClientStreams,
@@ -150,24 +249,23 @@ func HandleStream(svr interface{}, serviceName string, desc *grpc.StreamDesc, st
 			return
 		}
 
-		// NB: This is where support for a second of the protocol would be implemented. This
-		// check would instead need to also accept a second content-type and the logic below
-		// for consuming the request and sending the response would need to switch based on
-		// the actual version in use.
-		if r.Header.Get("Content-Type") != StreamRpcContentType_V1 {
+		contentType := r.Header.Get("Content-Type")
+		codec := getStreamingCodec(contentType)
+		if codec == nil {
 			writeError(w, http.StatusUnsupportedMediaType)
 			return
 		}
 
-		ctx, err := contextFromHeaders(ctx, r.Header)
+		ctx, cancel, err := contextFromHeaders(ctx, r.Header)
 		if err != nil {
 			writeError(w, http.StatusBadRequest)
 			return
 		}
+		defer cancel()
 
-		w.Header().Set("Content-Type", StreamRpcContentType_V1)
+		w.Header().Set("Content-Type", contentType)
 
-		str := &serverStream{r: r, w: w, respStream: desc.ClientStreams}
+		str := &serverStream{r: r, w: w, respStream: desc.ClientStreams, codec: codec}
 		sts := internal.ServerTransportStream{Name: info.FullMethod, Stream: str}
 		str.ctx = grpc.NewContextWithServerTransportStream(ctx, &sts)
 		if streamInt != nil {
@@ -181,26 +279,26 @@ func HandleStream(svr interface{}, serviceName string, desc *grpc.StreamDesc, st
 		}
 
 		tr := HttpTrailer{
+			Code:     int32(codes.OK),
+			Message:  codes.OK.String(),
 			Metadata: asTrailerProto(metadata.Join(str.tr...)),
 		}
-		if st, _ := status.FromError(err); st.Code() != codes.OK {
+		if err != nil {
+			st, _ := status.FromError(err)
+			if st.Code() == codes.OK {
+				// preserve all error details, but rewrite the code since we don't want
+				// to send back a non-error status when we know an error occured
+				stpb := st.Proto()
+				stpb.Code = int32(codes.Internal)
+				st = status.FromProto(stpb)
+			}
 			statProto := st.Proto()
 			tr.Code = statProto.Code
 			tr.Message = statProto.Message
 			tr.Details = statProto.Details
-		} else if err != nil {
-			tr.Code = int32(codes.Internal)
-			tr.Message = "Internal Server Error"
 		}
 
-		// must put something the trailing message so it's size is non-zero
-		// (otherwise, it's envelope cannot indicate a negative number, and
-		// it will be confused for a normal response message)
-		if tr.Message == "" {
-			tr.Message = codes.Code(tr.Code).String()
-		}
-
-		writeProtoMessage(w, &tr, true)
+		writeProtoMessage(w, codec, &tr, true)
 	}
 }
 
@@ -252,6 +350,7 @@ type serverStream struct {
 	ctx context.Context
 	// respStream is set to indicate whether client expects stream response; unary if false
 	respStream bool
+	codec      encoding.Codec
 
 	// rmu serializes access to r and protects recvd
 	rmu sync.Mutex
@@ -317,7 +416,7 @@ func (s *serverStream) SendMsg(m interface{}) error {
 	}
 
 	s.headersSent = true // sent implicitly
-	err := writeProtoMessage(s.w, m.(proto.Message), false)
+	err := writeProtoMessage(s.w, s.codec, m, false)
 	if err != nil {
 		s.writeFailed = true
 	}
@@ -339,7 +438,7 @@ func (s *serverStream) RecvMsg(m interface{}) error {
 		return err
 	}
 
-	err = readProtoMessage(s.r.Body, size, m.(proto.Message))
+	err = readProtoMessage(s.r.Body, s.codec, size, m)
 	if err == io.EOF {
 		return io.ErrUnexpectedEOF
 	} else if err != nil {
@@ -361,10 +460,11 @@ func (s *serverStream) RecvMsg(m interface{}) error {
 // using the given headers. The headers are converted to incoming metadata that
 // can be retrieved via metadata.FromIncomingContext. If the headers contain a
 // GRPC timeout, that is used to create a timeout for the returned context.
-func contextFromHeaders(parent context.Context, h http.Header) (context.Context, error) {
+func contextFromHeaders(parent context.Context, h http.Header) (context.Context, context.CancelFunc, error) {
+	cancel := func() {} // default to no-op
 	md, err := asMetadata(h)
 	if err != nil {
-		return nil, err
+		return parent, cancel, err
 	}
 	ctx := metadata.NewIncomingContext(parent, md)
 
@@ -390,9 +490,9 @@ func contextFromHeaders(parent context.Context, h http.Header) (context.Context,
 				unit = time.Nanosecond
 			}
 			if unit != 0 {
-				ctx, _ = context.WithTimeout(ctx, time.Duration(timeoutVal)*unit)
+				ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutVal)*unit)
 			}
 		}
 	}
-	return ctx, nil
+	return ctx, cancel, nil
 }

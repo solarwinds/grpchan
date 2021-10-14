@@ -24,7 +24,11 @@ func doCodeGen(req *plugins.CodeGenRequest, resp *plugins.CodeGenResponse) error
 	if err != nil {
 		return err
 	}
-	names := plugins.GoNames{ImportMap: args.importMap}
+	names := plugins.GoNames{
+		ImportMap:      args.importMap,
+		ModuleRoot:     args.moduleRoot,
+		SourceRelative: args.sourceRelative,
+	}
 	if args.importPath != "" {
 		// if we're overriding import path, go ahead and query
 		// package for each file, which will cache the override name
@@ -38,7 +42,7 @@ func doCodeGen(req *plugins.CodeGenRequest, resp *plugins.CodeGenResponse) error
 		}
 	}
 	for _, fd := range req.Files {
-		if err := generateChanStubs(fd, &names, resp); err != nil {
+		if err := generateChanStubs(fd, &names, resp, args); err != nil {
 			if fe, ok := err.(*gopoet.FormatError); ok {
 				if args.debug {
 					return fmt.Errorf("%s: error in generated Go code: %v:\n%s", fd.GetName(), err, fe.Unformatted)
@@ -54,11 +58,11 @@ func doCodeGen(req *plugins.CodeGenRequest, resp *plugins.CodeGenResponse) error
 }
 
 var typeOfRegistry = gopoet.NamedType(gopoet.NewSymbol("github.com/solarwinds/grpchan", "ServiceRegistry"))
-var typeOfChannel = gopoet.NamedType(gopoet.NewSymbol("github.com/solarwinds/grpchan", "Channel"))
-var typeOfContext = gopoet.NamedType(gopoet.NewSymbol("golang.org/x/net/context", "Context"))
+var typeOfClientConn = gopoet.NamedType(gopoet.NewSymbol("google.golang.org/grpc", "ClientConnInterface"))
+var typeOfContext = gopoet.NamedType(gopoet.NewSymbol("context", "Context"))
 var typeOfCallOptions = gopoet.SliceType(gopoet.NamedType(gopoet.NewSymbol("google.golang.org/grpc", "CallOption")))
 
-func generateChanStubs(fd *desc.FileDescriptor, names *plugins.GoNames, resp *plugins.CodeGenResponse) error {
+func generateChanStubs(fd *desc.FileDescriptor, names *plugins.GoNames, resp *plugins.CodeGenResponse, args codeGenArgs) error {
 	if len(fd.GetServices()) == 0 {
 		return nil
 	}
@@ -75,17 +79,24 @@ func generateChanStubs(fd *desc.FileDescriptor, names *plugins.GoNames, resp *pl
 		lowerSvcName := gopoet.Unexport(svcName)
 
 		f.AddElement(gopoet.NewFunc(fmt.Sprintf("RegisterHandler%s", svcName)).
+			SetComment(fmt.Sprintf("Deprecated: Use Register%sServer instead.", svcName)).
 			AddArg("reg", typeOfRegistry).
 			AddArg("srv", names.GoTypeForServiceServer(sd)).
-			Printlnf("reg.RegisterService(&%s, srv)", names.GoNameOfServiceDesc(sd)))
+			Printlnf("reg.RegisterService(&%s, srv)", serviceDescVarName(sd, names, args.legacyDescNames)))
+
+		if !args.legacyStubs {
+			continue
+		}
 
 		cc := gopoet.NewStructTypeSpec(fmt.Sprintf("%sChannelClient", lowerSvcName),
-			gopoet.NewField("ch", typeOfChannel))
+			gopoet.NewField("ch", typeOfClientConn))
 		f.AddType(cc)
 
 		f.AddElement(gopoet.NewFunc(fmt.Sprintf("New%sChannelClient", svcName)).
-			AddArg("ch", typeOfChannel).
+			SetComment(fmt.Sprintf("Deprecated: Use New%sClient instead.", svcName)).
+			AddArg("ch", typeOfClientConn).
 			AddResult("", names.GoTypeForServiceClient(sd)).
+			SetComment(fmt.Sprintf("Deprecated: Use New%sClient instead.", svcName)).
 			Printlnf("return &%s{ch: ch}", cc))
 
 		streamCount := 0
@@ -101,7 +112,7 @@ func generateChanStubs(fd *desc.FileDescriptor, names *plugins.GoNames, resp *pl
 			}{
 				ServiceName:  sd.GetFullyQualifiedName(),
 				MethodName:   md.GetName(),
-				ServiceDesc:  names.GoNameOfServiceDesc(sd),
+				ServiceDesc:  serviceDescVarName(sd, names, args.legacyDescNames),
 				StreamClient: names.GoTypeForStreamClientImpl(md),
 				StreamIndex:  streamCount,
 				RequestType:  names.GoTypeForMessage(md.GetOutputType()),
@@ -170,6 +181,13 @@ func generateChanStubs(fd *desc.FileDescriptor, names *plugins.GoNames, resp *pl
 	return gopoet.WriteGoFile(out, f)
 }
 
+func serviceDescVarName(sd *desc.ServiceDescriptor, names *plugins.GoNames, legacyNames bool) string {
+	if legacyNames {
+		return names.GoNameOfServiceDesc(sd)
+	}
+	return names.GoNameOfExportedServiceDesc(sd).Name
+}
+
 type templates map[string]*template.Template
 
 func (t templates) makeTemplate(templateText string) *template.Template {
@@ -182,9 +200,13 @@ func (t templates) makeTemplate(templateText string) *template.Template {
 }
 
 type codeGenArgs struct {
-	debug      bool
-	importPath string
-	importMap  map[string]string
+	debug           bool
+	legacyStubs     bool
+	legacyDescNames bool
+	importPath      string
+	importMap       map[string]string
+	moduleRoot      string
+	sourceRelative  bool
 }
 
 func parseArgs(args []string) (codeGenArgs, error) {
@@ -193,25 +215,50 @@ func parseArgs(args []string) (codeGenArgs, error) {
 		vals := strings.SplitN(arg, "=", 2)
 		switch vals[0] {
 		case "debug":
-			if len(vals) == 1 {
-				// if no value, assume "true"
-				result.debug = true
-				break
+			val, err := boolVal(vals)
+			if err != nil {
+				return result, err
 			}
-			switch strings.ToLower(vals[1]) {
-			case "true", "on", "yes", "1":
-				result.debug = true
-			case "false", "off", "no", "0":
-				result.debug = false
-			default:
-				return result, fmt.Errorf("invalid boolean arg for option 'debug': %s", vals[1])
+			result.debug = val
+
+		case "legacy_stubs":
+			val, err := boolVal(vals)
+			if err != nil {
+				return result, err
 			}
+			result.legacyStubs = val
+
+		case "legacy_desc_names":
+			val, err := boolVal(vals)
+			if err != nil {
+				return result, err
+			}
+			result.legacyDescNames = val
 
 		case "import_path":
 			if len(vals) == 1 {
 				return result, fmt.Errorf("plugin option 'import_path' requires an argument")
 			}
 			result.importPath = vals[1]
+
+		case "module":
+			if len(vals) == 1 {
+				return result, fmt.Errorf("plugin option 'module' requires an argument")
+			}
+			result.moduleRoot = vals[1]
+
+		case "paths":
+			if len(vals) == 1 {
+				return result, fmt.Errorf("plugin option 'paths' requires an argument")
+			}
+			switch vals[1] {
+			case "import":
+				result.sourceRelative = false
+			case "source_relative":
+				result.sourceRelative = true
+			default:
+				return result, fmt.Errorf("plugin option 'paths' accepts 'import' or 'source_relative' as value, got %q", vals[1])
+			}
 
 		default:
 			if len(vals[0]) > 1 && vals[0][0] == 'M' {
@@ -228,5 +275,25 @@ func parseArgs(args []string) (codeGenArgs, error) {
 			return result, fmt.Errorf("unknown plugin option: %s", vals[0])
 		}
 	}
+
+	if result.sourceRelative && result.moduleRoot != "" {
+		return result, fmt.Errorf("plugin option 'module' cannot be used with 'paths=source_relative'")
+	}
+
 	return result, nil
+}
+
+func boolVal(vals []string) (bool, error) {
+	if len(vals) == 1 {
+		// if no value, assume "true"
+		return true, nil
+	}
+	switch strings.ToLower(vals[1]) {
+	case "true", "on", "yes", "1":
+		return true, nil
+	case "false", "off", "no", "0":
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid boolean arg for option '%s': %s", vals[0], vals[1])
+	}
 }
