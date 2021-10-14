@@ -3,10 +3,11 @@ package grpchan_test
 import (
 	"context"
 	"fmt"
-	"github.com/golang/protobuf/ptypes/empty"
 	"io"
 	"reflect"
 	"testing"
+
+	"github.com/golang/protobuf/ptypes/empty"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"

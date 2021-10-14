@@ -121,10 +121,7 @@ func (m frame) String() string {
 // The server-side of an RPC is executed in a separate goroutine, so things like
 // deadlines and context cancellation work, even for unary RPCs.
 type Channel struct {
-	handlers             grpchan.HandlerMap
-	handlersMu           sync.RWMutex
-	handlersExpectations sync.WaitGroup
-
+	handlers          grpchan.HandlerMap
 	unaryInterceptor  grpc.UnaryServerInterceptor
 	streamInterceptor grpc.StreamServerInterceptor
 	cloner            Cloner
@@ -133,37 +130,15 @@ type Channel struct {
 var _ grpc.ClientConnInterface = (*Channel)(nil)
 var _ grpc.ServiceRegistrar = (*Channel)(nil)
 
-// SetHandlersExpectations updates the expected service handlers
-// so that QueryService can later wait for them giving a chance to be registered beforehand
-func (c *Channel) SetHandlersExpectations(servicesNum int) {
-	c.handlersExpectations.Add(servicesNum)
-}
-
 // RegisterService registers the given service and implementation. Like a normal
 // gRPC server, an in-process channel only allows a single implementation for a
 // particular service. Services are identified by their fully-qualified name
 // (e.g. "<package>.<service>").
 func (c *Channel) RegisterService(desc *grpc.ServiceDesc, svr interface{}) {
-	defer c.handlersExpectations.Done()
-
-	c.handlersMu.Lock()
-	defer c.handlersMu.Unlock()
-
 	if c.handlers == nil {
 		c.handlers = grpchan.HandlerMap{}
 	}
-
 	c.handlers.RegisterService(desc, svr)
-}
-
-// QueryService forwards querying for the registered service handlers but in the thread-safe way
-func (c *Channel) QueryService(name string) (*grpc.ServiceDesc, interface{}) {
-	c.handlersExpectations.Wait()
-
-	c.handlersMu.RLock()
-	defer c.handlersMu.RUnlock()
-
-	return c.handlers.QueryService(name)
 }
 
 // WithServerUnaryInterceptor configures the in-process channel to use the given
@@ -233,8 +208,7 @@ func (c *Channel) Invoke(ctx context.Context, method string, req, resp interface
 	strs := strings.SplitN(method[1:], "/", 2)
 	serviceName := strs[0]
 	methodName := strs[1]
-
-	sd, handler := c.QueryService(serviceName)
+	sd, handler := c.handlers.QueryService(serviceName)
 	if sd == nil {
 		// service name not found
 		return status.Errorf(codes.Unimplemented, "service %s not implemented", serviceName)
@@ -339,8 +313,7 @@ func (c *Channel) NewStream(ctx context.Context, desc *grpc.StreamDesc, method s
 	// corresponding StreamDesc that includes a handler.
 	serviceName := strs[0]
 	methodName := strs[1]
-
-	sd, handler := c.QueryService(serviceName)
+	sd, handler := c.handlers.QueryService(serviceName)
 	if sd == nil {
 		// service name not found
 		return nil, status.Errorf(codes.Unimplemented, "service %s not implemented", serviceName)
