@@ -2,6 +2,7 @@ package httpgrpc
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
@@ -17,18 +18,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/golang/protobuf/proto"
-	"github.com/golang/protobuf/ptypes/any"
-	"golang.org/x/net/context"
 	spb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/encoding"
+	grpcproto "google.golang.org/grpc/encoding/proto"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 
-	"github.com/solarwinds/grpchan"
 	"github.com/solarwinds/grpchan/internal"
 )
 
@@ -42,7 +43,7 @@ type Channel struct {
 	BaseURL   *url.URL
 }
 
-var _ grpchan.Channel = (*Channel)(nil)
+var _ grpc.ClientConnInterface = (*Channel)(nil)
 
 var grpcDetailsHeader = textproto.CanonicalMIMEHeaderKey("X-GRPC-Details")
 
@@ -61,7 +62,8 @@ func (ch *Channel) Invoke(ctx context.Context, methodName string, req, resp inte
 	h := headersFromContext(ctx)
 	h.Set("Content-Type", UnaryRpcContentType_V1)
 
-	b, err := proto.Marshal(req.(proto.Message))
+	codec := encoding.GetCodec(grpcproto.Name)
+	b, err := codec.Marshal(req)
 	if err != nil {
 		return err
 	}
@@ -111,7 +113,7 @@ func (ch *Channel) Invoke(ctx context.Context, methodName string, req, resp inte
 	if err != nil {
 		return err
 	}
-	return proto.Unmarshal(b, resp.(proto.Message))
+	return codec.Unmarshal(b, resp)
 }
 
 // NewStream satisfies the grpchan.Channel interface and supports sending
@@ -132,21 +134,28 @@ func (ch *Channel) NewStream(ctx context.Context, desc *grpc.StreamDesc, methodN
 	h := headersFromContext(ctx)
 	h.Set("Content-Type", StreamRpcContentType_V1)
 
+	// Intercept r.Close() so we can control the error sent across to the writer thread.
 	r, w := io.Pipe()
-	req, err := http.NewRequest("POST", reqUrlStr, r)
+	req, err := http.NewRequest("POST", reqUrlStr, ioutil.NopCloser(r))
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 	req.Header = h
 
 	cs := newClientStream(ctx, cancel, w, desc.ServerStreams, copts, ch.BaseURL)
+	go cs.doHttpCall(ch.Transport, req, r)
+
 	// ensure that context is cancelled, even if caller
 	// fails to fully consume or cancel the stream
-	runtime.SetFinalizer(cs, func(*clientStream) { cancel() })
+	ret := &clientStreamWrapper{cs}
+	runtime.SetFinalizer(ret, func(*clientStreamWrapper) { cancel() })
 
-	go cs.doHttpCall(ch.Transport, req)
+	return ret, nil
+}
 
-	return cs, nil
+type clientStreamWrapper struct {
+	grpc.ClientStream
 }
 
 func getPeer(baseUrl *url.URL, tls *tls.ConnectionState) *peer.Peer {
@@ -199,6 +208,7 @@ type clientStream struct {
 	cancel  context.CancelFunc
 	copts   *internal.CallOptions
 	baseUrl *url.URL
+	codec   encoding.Codec
 
 	// respStream is set to indicate whether client expects stream response; unary if false
 	respStream bool
@@ -231,6 +241,7 @@ func newClientStream(ctx context.Context, cancel context.CancelFunc, w io.WriteC
 		cancel:     cancel,
 		copts:      copts,
 		baseUrl:    baseUrl,
+		codec:      encoding.GetCodec(grpcproto.Name),
 		w:          w,
 		respStream: recvStream,
 		rCh:        make(chan []byte),
@@ -305,7 +316,7 @@ func (cs *clientStream) SendMsg(m interface{}) error {
 		return io.EOF
 	}
 
-	cs.wErr = writeProtoMessage(cs.w, m.(proto.Message), false)
+	cs.wErr = writeProtoMessage(cs.w, cs.codec, m, false)
 	return cs.wErr
 }
 
@@ -326,7 +337,7 @@ func (cs *clientStream) RecvMsg(m interface{}) error {
 			}
 			return err
 		}
-		err := proto.Unmarshal(msg, m.(proto.Message))
+		err := cs.codec.Unmarshal(msg, m)
 		if err != nil {
 			return status.Error(codes.Internal, fmt.Sprintf("server sent invalid message: %v", err))
 		}
@@ -371,7 +382,7 @@ func (cs *clientStream) RecvMsg(m interface{}) error {
 
 // doHttpCall performs the HTTP round trip and then reads the reply body,
 // sending delimited messages to the clientStream via a channel.
-func (cs *clientStream) doHttpCall(transport http.RoundTripper, req *http.Request) {
+func (cs *clientStream) doHttpCall(transport http.RoundTripper, req *http.Request, readPipe *io.PipeReader) {
 	// On completion, we must fill in cs.tr or cs.rErr and then close channel,
 	// which signals to client code that we've reached end-of-stream.
 
@@ -388,6 +399,7 @@ func (cs *clientStream) doHttpCall(transport http.RoundTripper, req *http.Reques
 			cs.rErr = rErr
 		}
 		cs.done = true
+		readPipe.CloseWithError(rErr)
 		close(cs.rCh)
 	}()
 
@@ -406,7 +418,10 @@ func (cs *clientStream) doHttpCall(transport http.RoundTripper, req *http.Reques
 		onReady(statusFromContextError(err), nil)
 		return
 	}
-	defer reply.Body.Close()
+	defer func() {
+		ioutil.ReadAll(reply.Body)
+		reply.Body.Close()
+	}()
 
 	if len(cs.copts.Peer) > 0 {
 		cs.copts.SetPeer(getPeer(cs.baseUrl, reply.TLS))
@@ -442,7 +457,7 @@ func (cs *clientStream) doHttpCall(transport http.RoundTripper, req *http.Reques
 			// final message is a trailer (need lock to write to cs.tr)
 			cs.rMu.Lock()
 			rMuHeld = true // defer above will unlock for us
-			cs.rErr = readProtoMessage(reply.Body, int32(-sz), &cs.tr)
+			cs.rErr = readProtoMessage(reply.Body, cs.codec, int32(-sz), &cs.tr)
 			if cs.rErr != nil {
 				if cs.rErr == io.EOF {
 					cs.rErr = io.ErrUnexpectedEOF
@@ -519,15 +534,15 @@ func statFromResponse(reply *http.Response) *status.Status {
 		}
 	}
 	if code != codes.OK {
-		var details []*any.Any
+		var details []*anypb.Any
 		if detailHeaders := reply.Header[grpcDetailsHeader]; len(detailHeaders) > 0 {
-			details = make([]*any.Any, 0, len(detailHeaders))
+			details = make([]*anypb.Any, 0, len(detailHeaders))
 			for _, d := range detailHeaders {
 				b, err := base64.RawURLEncoding.DecodeString(d)
 				if err != nil {
 					continue
 				}
-				var msg any.Any
+				var msg anypb.Any
 				if err := proto.Unmarshal(b, &msg); err != nil {
 					continue
 				}

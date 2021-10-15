@@ -1,8 +1,8 @@
 # gRPC Channels
 
-[![Build Status](https://travis-ci.org/librato/grpchan.svg?branch=master)](https://travis-ci.org/librato/grpchan/branches)
-[![Go Report Card](https://goreportcard.com/badge/github.com/librato/grpchan)](https://goreportcard.com/report/github.com/librato/grpchan)
-[![GoDoc](https://godoc.org/github.com/librato/grpchan?status.svg)](https://godoc.org/github.com/librato/grpchan)
+[![Build Status](https://circleci.com/gh/solarwinds/grpchan/tree/master.svg?style=svg)](https://circleci.com/gh/solarwinds/grpchan/tree/master)
+[![Go Report Card](https://goreportcard.com/badge/github.com/solarwinds/grpchan)](https://goreportcard.com/report/github.com/solarwinds/grpchan)
+[![GoDoc](https://godoc.org/github.com/solarwinds/grpchan?status.svg)](https://godoc.org/github.com/solarwinds/grpchan)
 
 This repo provides an abstraction for an RPC connection: the `Channel`.
 Implementations of `Channel` can provide alternate transports -- different
@@ -22,7 +22,7 @@ In order to use channels with your proto-defined gRPC services, you need to use 
 protoc plugin included in this repo: `protoc-gen-grpchan`.
 
 ```bash
-go install github.com/librato/grpchan/cmd/protoc-gen-grpchan
+go install github.com/solarwinds/grpchan/cmd/protoc-gen-grpchan
 ```
 
 You use the plugin via a `--grpchan_out` parameter to protoc. Specify the same
